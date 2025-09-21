@@ -32,6 +32,8 @@ import torch.nn.parallel.distributed as dist_module
 
 from metrics import metric_main
 
+from torch.optim.lr_scheduler import CosineAnnealingLR
+
 # ----------------------------------------------------------------------------
 import torch.distributed as tdist  # use PyTorch original
 
@@ -172,6 +174,7 @@ def training_loop(
     dist.print0('Setting up optimizer...')
     loss_fn = dnnlib.util.construct_class_by_name(**loss_kwargs) # training.loss.(VP|VE|EDM)Loss
     optimizer = dnnlib.util.construct_class_by_name(params=net.parameters(), **optimizer_kwargs) # subclass of torch.optim.Optimizer
+    scheduler = CosineAnnealingLR(optimizer, T_max=total_kimg*1000//batch_size, eta_min=1e-5)
     augment_pipe = dnnlib.util.construct_class_by_name(**augment_kwargs) if augment_kwargs is not None else None # training.augment.AugmentPipe
     ddp = torch.nn.parallel.DistributedDataParallel(net, device_ids=[device], broadcast_buffers=False, static_graph=True, find_unused_parameters=False,  gradient_as_bucket_view=True)   # 关闭缓冲区同步，使用静态图，为了计算jvp,
     
@@ -258,6 +261,7 @@ def training_loop(
             if param.grad is not None:
                 torch.nan_to_num(param.grad, nan=0, posinf=1e5, neginf=-1e5, out=param.grad)
         optimizer.step()
+        scheduler.step()
 
         # Update EMA.
         ema_halflife_nimg = ema_halflife_kimg * 1000
