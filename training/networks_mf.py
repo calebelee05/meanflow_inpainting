@@ -257,7 +257,7 @@ class SongUNet(torch.nn.Module):
         img_resolution,                     # Image resolution at input/output.
         in_channels,                        # Number of color channels at input.
         out_channels,                       # Number of color channels at output.
-        label_dim           = 0,            # Number of class labels, 0 = unconditional.
+        label_dim           = 10,            # Number of class labels, 0 = unconditional.
         augment_dim         = 0,            # Augmentation label dimensionality, 0 = no augmentation.
 
         model_channels      = 128,          # Base multiplier for the number of channels.
@@ -395,11 +395,15 @@ class SongUNet(torch.nn.Module):
         
         return aux
 
+#
+# NOTE: These architectures are defined for completeness but are *not* used
+# by the current training script; training always instantiates SongUNet.
 #----------------------------------------------------------------------------
 # Reimplementation of the ADM architecture from the paper
 # "Diffusion Models Beat GANS on Image Synthesis". Equivalent to the
 # original implementation by Dhariwal and Nichol, available at
 # https://github.com/openai/guided-diffusion
+
 
 @persistence.persistent_class
 class DhariwalUNet(torch.nn.Module):
@@ -407,7 +411,7 @@ class DhariwalUNet(torch.nn.Module):
         img_resolution,                     # Image resolution at input/output.
         in_channels,                        # Number of color channels at input.
         out_channels,                       # Number of color channels at output.
-        label_dim           = 0,            # Number of class labels, 0 = unconditional.
+        label_dim           = 10,            # Number of class labels, 0 = unconditional.
         augment_dim         = 0,            # Augmentation label dimensionality, 0 = no augmentation.
 
         model_channels      = 192,          # Base multiplier for the number of channels.
@@ -503,7 +507,7 @@ class VPPrecond(torch.nn.Module):
     def __init__(self,
         img_resolution,                 # Image resolution.
         img_channels,                   # Number of color channels.
-        label_dim       = 0,            # Number of class labels, 0 = unconditional.
+        label_dim       = 10,            # Number of class labels, 0 = unconditional.
         use_fp16        = False,        # Execute the underlying model at FP16 precision?
         beta_d          = 19.9,         # Extent of the noise level schedule.
         beta_min        = 0.1,          # Initial slope of the noise level schedule.
@@ -562,7 +566,7 @@ class VEPrecond(torch.nn.Module):
     def __init__(self,
         img_resolution,                 # Image resolution.
         img_channels,                   # Number of color channels.
-        label_dim       = 0,            # Number of class labels, 0 = unconditional.
+        label_dim       = 10,            # Number of class labels, 0 = unconditional.
         use_fp16        = False,        # Execute the underlying model at FP16 precision?
         sigma_min       = 0.02,         # Minimum supported noise level.
         sigma_max       = 100,          # Maximum supported noise level.
@@ -606,7 +610,7 @@ class iDDPMPrecond(torch.nn.Module):
     def __init__(self,
         img_resolution,                     # Image resolution.
         img_channels,                       # Number of color channels.
-        label_dim       = 0,                # Number of class labels, 0 = unconditional.
+        label_dim       = 10,                # Number of class labels, 0 = unconditional.
         use_fp16        = False,            # Execute the underlying model at FP16 precision?
         C_1             = 0.001,            # Timestep adjustment at low noise levels.
         C_2             = 0.008,            # Timestep adjustment at high noise levels.
@@ -666,7 +670,7 @@ class EDMPrecond(torch.nn.Module):
     def __init__(self,
         img_resolution,                     # Image resolution.
         img_channels,                       # Number of color channels.
-        label_dim       = 0,                # Number of class labels, 0 = unconditional.
+        label_dim       = 10,                # Number of class labels, 0 = unconditional.
         use_fp16        = False,            # Execute the underlying model at FP16 precision?
         sigma_min       = 0,                # Minimum supported noise level.
         sigma_max       = float('inf'),     # Maximum supported noise level.
@@ -709,7 +713,7 @@ class MFPrecond(torch.nn.Module):
     def __init__(self,
         img_resolution,                     # Image resolution.
         img_channels,                       # Number of color channels.
-        label_dim       = 0,                # Number of class labels, 0 = unconditional.
+        label_dim       = 10,                # Number of class labels, 0 = unconditional.
         use_fp16        = False,            # Execute the underlying model at FP16 precision?
         sigma_min       = 0.002,                # Minimum supported noise level.
         sigma_max       = 80,     # Maximum supported noise level.

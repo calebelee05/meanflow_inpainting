@@ -153,7 +153,7 @@ def main(network_pkl, outdir, subdirs, seeds, class_idx, max_batch_size, num_fid
         # images = net(sigma_G*latents.to(torch.float64), sigma, class_labels).to(torch.float64)
         sigma_min = 0.002
         sigma_max = 1
-        images = (latents-1.0*net(latents, t=sigma_max * torch.ones([latents.shape[0], 1, 1, 1], device=latents.device), class_labels, h=(sigma_max-sigma_min) * sigma_max*torch.ones([latents.shape[0], 1, 1, 1], device=latents.device), augment_labels=torch.zeros(latents.shape[0], 9).to(latents.device)))
+        images = (latents-1.0*net(latents, t=sigma_max * torch.ones([latents.shape[0], 1, 1, 1], device=latents.device), class_labels=class_labels, h=(sigma_max-sigma_min) * sigma_max*torch.ones([latents.shape[0], 1, 1, 1], device=latents.device), augment_labels=torch.zeros(latents.shape[0], 9).to(latents.device)))
 
         # Save images.
         images_np = (images * 127.5 + 128).clip(0, 255).to(torch.uint8).permute(0, 2, 3, 1).cpu().numpy()
