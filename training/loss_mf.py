@@ -80,6 +80,17 @@ class MeanFlowLoss:
         device = x.device
         batch_size = x.shape[0]
         shape = (batch_size, 1, 1, 1)
+        
+        # ---- Sample random inpainting mask ----
+        B, C, H, W = x.shape
+        mask = torch.zeros((B, 1, H, W), device=device)
+
+        # Example: random square mask (CIFAR-10 friendly)
+        mask_size = H // 2
+        for i in range(B):
+            top = torch.randint(0, H - mask_size, (1,))
+            left = torch.randint(0, W - mask_size, (1,))
+            mask[i, :, top:top+mask_size, left:left+mask_size] = 1.0
 
         t = self.noise_distribution(shape, device) # Sample t and r from noise distribution
         r = self.noise_distribution(shape, device)
@@ -95,10 +106,24 @@ class MeanFlowLoss:
         else:
             y, augment_labels = x, None
 
+        """
         n = torch.randn_like(y) # Create noise and corrupted image
         z_t = (1 - t) * y + t * n
         v = n - y  # True velocity
-        
+        """
+
+        n = torch.randn_like(y)
+
+        # Full corrupted image
+        z_full = (1 - t) * y + t * n
+
+        # Only corrupt masked region
+        z_t = (1 - mask) * y + mask * z_full
+
+        # True velocity only inside masked region
+        v = mask * (n - y)
+
+
         # Prepare labels for guidance
         labels_in = labels
 
@@ -108,8 +133,8 @@ class MeanFlowLoss:
                 labels_null = torch.full_like(labels, self.num_classes)
                 
                 # Get conditional and unconditional velocities
-                v_cond = net.module(z_t, t, class_labels=labels, h=torch.zeros_like(t), augment_labels=augment_labels)
-                v_uncond = net.module(z_t, t, class_labels=labels_null, h=torch.zeros_like(t), augment_labels=augment_labels)
+                v_cond = net.module(z_t, t, class_labels=labels, h=torch.zeros_like(t), augment_labels=augment_labels, mask=mask, x_visible=(1 - mask) * y)
+                v_uncond = net.module(z_t, t, class_labels=labels_null, h=torch.zeros_like(t), augment_labels=augment_labels, mask=mask, x_visible=(1 - mask) * y)
                 
                 # Apply guidance and conditional dropout
                 v_g = self._apply_guidance(v, v_uncond, v_cond, t)
@@ -119,7 +144,7 @@ class MeanFlowLoss:
 
         # Compute model output and time derivative
         def u_wrapper(z, t, r):
-            return net.module(z, t, class_labels=labels_in, h=t-r, augment_labels=augment_labels)
+            return net.module(z, t, class_labels=labels_in, h=t-r, augment_labels=augment_labels, mask=mask, x_visible=(1 - mask) * y)
         
         primals = (z_t, t, r)
         tangents = (v_g, torch.ones_like(t), torch.zeros_like(t))

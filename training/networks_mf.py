@@ -345,8 +345,12 @@ class SongUNet(torch.nn.Module):
                 self.dec[f'{res}x{res}_aux_norm'] = GroupNorm(num_channels=cout, eps=1e-6)
                 self.dec[f'{res}x{res}_aux_conv'] = Conv2d(in_channels=cout, out_channels=out_channels, kernel=3, **init_zero)
 
-    def forward(self, x, t, class_labels, h=None, augment_labels=None):
+    def forward(self, x, t, class_labels, h=None, augment_labels=None, mask=None, x_visible=None):
         # Mapping.
+
+        if mask is not None:
+            x = torch.cat([x, mask, x_visible], dim=1)
+
         emb = self.map_noise_t(t)
 
         if h is not None:
@@ -726,11 +730,17 @@ class MFPrecond(torch.nn.Module):
         self.sigma_min = sigma_min
         self.sigma_max = sigma_max
         self.sigma_data = sigma_data
-        self.model = globals()[model_type](img_resolution=img_resolution, in_channels=img_channels, out_channels=img_channels, label_dim=label_dim, **model_kwargs)
+        self.model = globals()[model_type](img_resolution=img_resolution, in_channels=img_channels * 2 + 1, out_channels=img_channels, label_dim=label_dim, **model_kwargs)
 
-    def forward(self, x, t, class_labels=None, h=None, force_fp32=False, **model_kwargs):
+    def forward(self, x, t, class_labels=None, mask=None, x_visible=None, h=None, force_fp32=False, **model_kwargs):
         x = x.to(torch.float32)
         t = t.to(torch.float32).reshape(-1, 1, 1, 1)
+
+        if mask is None:
+            mask = torch.zeros_like(x[:, :1, :, :])
+
+        if x_visible is None:
+            x_visible = torch.zeros_like(x)
 
         if h is None:
             h = torch.zeros_like(t)
@@ -743,8 +753,10 @@ class MFPrecond(torch.nn.Module):
 
         c_t = t.flatten().log()/4
         c_h = h.flatten().log()/4
+        
+        x_input = torch.cat([x, mask, x_visible], dim=1)
 
-        D_x = self.model(x.to(dtype), c_t, class_labels=class_labels, h=c_h, **model_kwargs)
+        D_x = self.model(x_input.to(dtype), c_t, class_labels=class_labels, h=c_h, **model_kwargs)
 
         assert D_x.dtype == dtype
         return D_x
