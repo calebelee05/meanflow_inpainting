@@ -143,6 +143,11 @@ def main(**kwargs):
         c.dataset_kwargs.max_size = len(dataset_obj) # be explicit about dataset size
         if opts.cond and not dataset_obj.has_labels:
             raise click.ClickException('--cond=True requires labels specified in dataset.json')
+        # number of classes is needed by the loss; record it here so the
+        # loss constructor doesn't receive `None` and trigger a TypeError.  The
+        # training loop also uses dataset_obj.label_dim when building the
+        # network interface_kwargs, so this is consistent.
+        c.loss_kwargs.num_classes = dataset_obj.label_dim
         del dataset_obj # conserve memory
     except IOError as err:
         raise click.ClickException(f'--data: {err}')

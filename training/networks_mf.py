@@ -395,9 +395,6 @@ class SongUNet(torch.nn.Module):
         
         return aux
 
-#
-# NOTE: These architectures are defined for completeness but are *not* used
-# by the current training script; training always instantiates SongUNet.
 #----------------------------------------------------------------------------
 # Reimplementation of the ADM architecture from the paper
 # "Diffusion Models Beat GANS on Image Synthesis". Equivalent to the

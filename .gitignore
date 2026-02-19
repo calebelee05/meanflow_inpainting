@@ -141,3 +141,5 @@ image_experiments/
 
 data/
 save/
+
+*.zip
