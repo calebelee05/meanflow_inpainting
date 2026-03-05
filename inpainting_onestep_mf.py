@@ -165,8 +165,18 @@ def main(network, outdir, seeds,
         sigma_min = 0.002
         sigma_max = 1
 
+        # Use single-channel mask for conditioning
+        mask_single = mask_tensor[:, :1, :, :]
+
+        # Concatenate conditioning
+        model_input = torch.cat([
+            latents,      # 3
+            x_orig,       # 3
+            mask_single   # 1
+        ], dim=1)         # -> 7 channels
+
         images = latents - net(
-            latents,
+            model_input,
             t=sigma_max * torch.ones([1,1,1,1], device=device),
             class_labels=class_labels,
             h=(sigma_max-sigma_min)*sigma_max*torch.ones([1,1,1,1], device=device),
