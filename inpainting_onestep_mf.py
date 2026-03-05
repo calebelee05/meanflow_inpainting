@@ -1,5 +1,6 @@
 """
-One-step MeanFlow Inpainting Script
+Standalone MeanFlow Inpainting Script
+(No call to generate_onestep_mf.py)
 """
 
 import os
@@ -75,13 +76,12 @@ def generate_random_mask(h, w, size):
 @click.option('--network', required=True, help='Network snapshot (.pkl)')
 @click.option('--outdir', required=True, help='Output directory')
 @click.option('--seeds', default='0', help='Seeds (e.g. 0 or 0-10)')
-@click.option('--class_idx', '--class', default=None, type=int)
 @click.option('--image', default=None, help='Path to image')
 @click.option('--mask', default=None, help='Path to mask')
 @click.option('--cifar_zip', default=None, help='Fallback CIFAR zip')
 @click.option('--mask_size', default=12, type=int)
 @click.option('--device', default='cuda')
-def main(network, outdir, seeds, class_idx,
+def main(network, outdir, seeds,
          image, mask, cifar_zip, mask_size, device):
 
     device = torch.device(device)
@@ -160,14 +160,7 @@ def main(network, outdir, seeds, class_idx,
 
         latents = noise * mask_tensor + x_orig * (1 - mask_tensor)
 
-        class_labels = None
-        if net.label_dim:
-            class_labels = torch.eye(net.label_dim, device=device)[
-                rnd.randint(net.label_dim, size=[1], device=device)
-            ]
-        if class_idx is not None:
-            class_labels[:] = 0
-            class_labels[:, class_idx] = 1
+        class_labels = torch.zeros(1, net.label_dim, device=device)
 
         sigma_min = 0.002
         sigma_max = 1
