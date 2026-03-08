@@ -60,14 +60,6 @@ def load_random_cifar(zip_path):
             return np.array(PIL.Image.open(f).convert("RGB"))
 
 
-def generate_random_mask(h, w, size):
-    mask = np.zeros((h, w), dtype=np.uint8)
-    top = random.randint(0, h-size)
-    left = random.randint(0, w-size)
-    mask[top:top+size, left:left+size] = 255
-    return mask
-
-
 # ---------------------------------------------------------
 # CLI
 # ---------------------------------------------------------
@@ -79,10 +71,11 @@ def generate_random_mask(h, w, size):
 @click.option('--image', default=None, help='Path to image')
 @click.option('--mask', default=None, help='Path to mask')
 @click.option('--cifar_zip', default=None, help='Fallback CIFAR zip')
-@click.option('--mask_size', default=12, type=int)
+@click.option('--mask_rate', default=0.1, type=float)
+@click.option('--mask_type', default='scatter', type=str)
 @click.option('--device', default='cuda')
 def main(network, outdir, seeds,
-         image, mask, cifar_zip, mask_size, device):
+         image, mask, cifar_zip, mask_rate, mask_type, device):
 
     device = torch.device(device)
     os.makedirs(outdir, exist_ok=True)
@@ -124,7 +117,7 @@ def main(network, outdir, seeds,
             PIL.Image.open(mask).convert("L").resize((W, H))
         )
     else:
-        mask_np = generate_random_mask(H, W, mask_size)
+        mask_np = dnnlib.util.generate_random_mask(H, W, mask_type=mask_type, target_coverage=mask_rate)
 
     PIL.Image.fromarray(mask_np).save(os.path.join(outdir, "mask.png"))
 
