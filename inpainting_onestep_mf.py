@@ -13,6 +13,8 @@ import torch
 import PIL.Image
 import tqdm
 import dnnlib
+import json
+import io
 
 # ---------------------------------------------------------
 # Utilities
@@ -51,12 +53,40 @@ def parse_int_list(s):
     return result
 
 
-def load_random_cifar(zip_path):
+def load_random_cifar(zip_path, label=None):
+    """
+    Load a random CIFAR-10 image from cifar10-32x32.zip.
+    If label is specified (0-9), sample only from that class.
+    """
+    
+
     with zipfile.ZipFile(zip_path, 'r') as z:
-        files = [f for f in z.namelist() if f.endswith('.png')]
-        selected = random.choice(files)
-        with z.open(selected) as f:
-            return np.array(PIL.Image.open(f).convert("RGB"))
+
+        # Load metadata
+        with z.open("dataset.json") as f:
+            metadata = json.load(f)
+
+        labels = metadata["labels"]
+
+        # Filter indices by label
+        if label is None:
+            candidates = list(range(len(labels)))
+        else:
+            candidates = [
+                i for i, (_, lab) in enumerate(labels)
+                if lab == label
+            ]
+
+        if len(candidates) == 0:
+            raise ValueError(f"No images found for label {label}")
+
+        idx = random.choice(candidates)
+        img_path, img_label = labels[idx]
+
+        with z.open(img_path) as f:
+            img = PIL.Image.open(io.BytesIO(f.read())).convert("RGB")
+
+        return np.array(img), img_label
 
 
 def generate_random_mask(h, w, size):
@@ -109,7 +139,7 @@ def main(network, outdir, seeds, class_idx,
             PIL.Image.open(image).convert("RGB").resize((W, H))
         )
     elif cifar_zip is not None:
-        original = load_random_cifar(cifar_zip)
+        original, label = load_random_cifar(cifar_zip, class_idx)
     else:
         raise ValueError("Provide --image or --cifar_zip")
 
@@ -153,13 +183,6 @@ def main(network, outdir, seeds, class_idx,
 
         rnd = StackedRandomGenerator(device, [seed])
 
-        noise = rnd.randn(
-            [1, net.img_channels, H, W],
-            device=device
-        )
-
-        latents = noise * mask_tensor + x_orig * (1 - mask_tensor)
-
         class_labels = None
         if net.label_dim:
             class_labels = torch.eye(net.label_dim, device=device)[
@@ -172,15 +195,25 @@ def main(network, outdir, seeds, class_idx,
         sigma_min = 0.002
         sigma_max = 1
 
-        images = latents - net(
-            latents,
-            t=sigma_max * torch.ones([1,1,1,1], device=device),
-            class_labels=class_labels,
-            h=(sigma_max-sigma_min)*sigma_max*torch.ones([1,1,1,1], device=device),
-            augment_labels=torch.zeros(1,9).to(device)
+        x_masked = x_orig * (1 - mask_tensor)
+        noise = rnd.randn(
+            [1, net.img_channels, H, W],
+            device=device
         )
 
-        images = x_orig * (1 - mask_tensor) + images * mask_tensor
+        latents = 0.3 * noise + x_masked
+        images = latents
+        """
+        with torch.no_grad():
+            images = latents - net(
+                latents,
+                t=sigma_max * torch.ones([1,1,1,1], device=device),
+                class_labels=class_labels,
+                h=(sigma_max-sigma_min)*sigma_max*torch.ones([1,1,1,1], device=device),
+                augment_labels=torch.zeros(1,9).to(device)
+            )
+"""
+        # images = x_orig * (1 - mask_tensor) + images * mask_tensor
 
         images_np = (images * 127.5 + 128).clamp(0,255)
         images_np = images_np.to(torch.uint8).permute(0,2,3,1)
