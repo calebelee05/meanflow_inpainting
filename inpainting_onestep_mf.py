@@ -117,7 +117,7 @@ def main(network, outdir, seeds,
             PIL.Image.open(mask).convert("L").resize((W, H))
         )
     else:
-        mask_np = dnnlib.util.generate_random_mask(H, W, mask_type=mask_type, target_coverage=mask_rate)
+        mask_np = dnnlib.util.generate_random_mask(H, W, mask_type=mask_type, min_size=1, max_size=3, target_coverage=mask_rate)
 
     PIL.Image.fromarray(mask_np).save(os.path.join(outdir, "mask.png"))
 

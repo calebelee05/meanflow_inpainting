@@ -16,6 +16,8 @@
 import torch
 from torch_utils import persistence
 import torch.nn.functional as F
+import random
+import numpy as np
 
 @persistence.persistent_class
 class MeanFlowLoss:
@@ -75,31 +77,44 @@ class MeanFlowLoss:
         v_g = torch.where(rand_mask[:, None, None, None], v, v_g)
         return labels_drop, v_g
 
-    def _random_box_mask(self, x, min_ratio=0.1, max_ratio=0.4):
+    def _random_box_mask(self, x, corruption_rate=0.25, min_ratio=0.05, max_ratio=0.15):
         """
-        Generate random rectangular masks.
-        Returns mask with shape [B,1,H,W]
+        Generate multiple small rectangular masks until the masked area
+        approximately matches corruption_rate.
+
+        Returns:
+            mask: Tensor [B,1,H,W] where 1 = masked region
         """
         B, C, H, W = x.shape
         device = x.device
 
         masks = torch.zeros((B, 1, H, W), device=device)
 
+        total_pixels = H * W
+        target_pixels = int(corruption_rate * total_pixels)
+
         for i in range(B):
-            box_h = int(torch.randint(int(H*min_ratio), int(H*max_ratio), (1,)))
-            box_w = int(torch.randint(int(W*min_ratio), int(W*max_ratio), (1,)))
 
-            top = torch.randint(0, H - box_h, (1,))
-            left = torch.randint(0, W - box_w, (1,))
+            masked_pixels = 0
 
-            masks[i, :, top:top+box_h, left:left+box_w] = 1.0
+            while masked_pixels < target_pixels:
+
+                box_h = torch.randint(1, 4, (1,), device=device).item()  # Random height between 1 and 3 pixels
+                box_w = torch.randint(1, 4, (1,), device=device).item()  # Random width between 1 and 3 pixels
+
+                top = torch.randint(0, H - box_h + 1, (1,), device=device).item()
+                left = torch.randint(0, W - box_w + 1, (1,), device=device).item()
+
+                masks[i, :, top:top+box_h, left:left+box_w] = 1.0
+
+                masked_pixels = masks[i].sum().item()
 
         return masks
 
     def __call__(self, net, images, labels=None, augment_pipe=None):
         x = images
         device = x.device
-        masks = self._random_box_mask(x)  # [B,1,H,W]
+        masks = self._random_box_mask(x, corruption_rate=(random.random() + 0.4) / 2.0)  # [B,1,H,W]
         x_masked = x * (1 - masks)
         batch_size = x.shape[0]
         shape = (batch_size, 1, 1, 1)
