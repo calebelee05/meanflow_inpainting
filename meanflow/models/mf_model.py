@@ -86,7 +86,7 @@ class TimestepEmbedder(nn.Module):
     """
     def __init__(self, hidden_size: int, frequency_embedding_size: int = 16):
         super().__init__()
-        self.time_embedding_dim = frequency_embedding_size
+        self.frequency_embedding_size = frequency_embedding_size
         self.mlp = nn.Sequential(
             nn.Linear(frequency_embedding_size, hidden_size, bias=True),
             nn.SiLU(),
@@ -121,7 +121,7 @@ class TimestepEmbedder(nn.Module):
         Returns:
             (B, hidden_size) embedding vector
         """
-        t_freq = self.timestep_embedding(t, self.time_embedding_dim)
+        t_freq = self.timestep_embedding(t, self.frequency_embedding_size)
         return self.mlp(t_freq)
 
 
@@ -158,16 +158,16 @@ class MFModel(nn.Module):
         )
     """
 
-    def __init__(self, shapes, hidden_size, net_arch, net_config, time_embedding_dim=16):
+    def __init__(self, shapes, time_embed_dim, net_arch, net_config, frequency_embedding_size=16):
         super().__init__()
         self.shapes = shapes
         self.D = prod(shapes)
 
-        self.time_embedder = TimestepEmbedder(hidden_size, time_embedding_dim)
+        self.time_embedder = TimestepEmbedder(time_embed_dim, frequency_embedding_size)
 
         # MFModel injects input_dim / output_dim so callers never need to compute them.
         self.net = net_arch(
-            input_dim=self.D + 2 * hidden_size,
+            input_dim=self.D + 2 * time_embed_dim,
             output_dim=self.D,
             **net_config,
         )

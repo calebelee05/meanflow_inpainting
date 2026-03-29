@@ -155,6 +155,6 @@ class MeanFlow(nn.Module):
             t = reshape_time(t, xt.shape)
             s = reshape_time(s, xt.shape)
             h = t - s
-            u = net(xt, (t.squeeze(), s.squeeze()), aug_cond=None)
+            u = v_avg_func(xt, t, s)
             xt = xt - u * h
         return xt
