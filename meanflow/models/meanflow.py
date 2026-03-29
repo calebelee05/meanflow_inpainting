@@ -139,22 +139,20 @@ class MeanFlow(nn.Module):
 
         return loss
 
-    def sample(self, samples_shape, net=None, device=None, x1=None, T=1):
+    def sample(self, x1=None, net=None, device=None, samples_shape=200, T=1):
         net = net if net is not None else self.net_ema
 
         if x1 is None:
             x1 = torch.randn(samples_shape, dtype=torch.float32, device=device)
         else:
             x1 = x1.to(device)
+        batch_size=x1.shape[0]
         v_avg_func = self.construct_v_avg_func(net, aug_cond=None, version=self.args.version)
-        batch_size = samples_shape[0]
         xt = x1
         for step in range(T, 0, -1):
             t = torch.full((batch_size,), step / T, device=device)
             s = torch.full((batch_size,), (step - 1) / T, device=device)
-            t = reshape_time(t, xt.shape)
-            s = reshape_time(s, xt.shape)
-            h = t - s
+            h = reshape_time(t - s, xt.shape)
             u = v_avg_func(xt, t, s)
             xt = xt - u * h
         return xt
