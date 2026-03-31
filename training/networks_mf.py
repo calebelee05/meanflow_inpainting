@@ -726,7 +726,7 @@ class MFPrecond(torch.nn.Module):
         self.sigma_min = sigma_min
         self.sigma_max = sigma_max
         self.sigma_data = sigma_data
-        self.model = globals()[model_type](img_resolution=img_resolution, in_channels=img_channels, out_channels=img_channels, label_dim=label_dim, **model_kwargs)
+        self.model = globals()[model_type](img_resolution=img_resolution, in_channels=img_channels * 2 + 1, out_channels=img_channels, label_dim=label_dim, **model_kwargs)
 
     def forward(self, x, t, class_labels=None, h=None, force_fp32=False, **model_kwargs):
         x = x.to(torch.float32)

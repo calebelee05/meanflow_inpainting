@@ -89,13 +89,6 @@ def load_random_cifar(zip_path, label=None):
         return np.array(img), img_label
 
 
-def generate_random_mask(h, w, size):
-    mask = np.zeros((h, w), dtype=np.uint8)
-    top = random.randint(0, h-size)
-    left = random.randint(0, w-size)
-    mask[top:top+size, left:left+size] = 255
-    return mask
-
 
 # ---------------------------------------------------------
 # CLI
@@ -108,11 +101,12 @@ def generate_random_mask(h, w, size):
 @click.option('--class_idx', '--class', default=None, type=int)
 @click.option('--image', default=None, help='Path to image')
 @click.option('--mask', default=None, help='Path to mask')
+@click.option('--mask_rate', default=0.1, type=float)
+
 @click.option('--cifar_zip', default=None, help='Fallback CIFAR zip')
-@click.option('--mask_size', default=12, type=int)
 @click.option('--device', default='cuda')
 def main(network, outdir, seeds, class_idx,
-         image, mask, cifar_zip, mask_size, device):
+         image, mask, cifar_zip, mask_rate, device):
 
     device = torch.device(device)
     os.makedirs(outdir, exist_ok=True)
@@ -154,7 +148,7 @@ def main(network, outdir, seeds, class_idx,
             PIL.Image.open(mask).convert("L").resize((W, H))
         )
     else:
-        mask_np = generate_random_mask(H, W, mask_size)
+        mask_np = dnnlib.util.generate_random_mask(H, W, min_size=1, max_size=3, target_coverage=mask_rate)
 
     PIL.Image.fromarray(mask_np).save(os.path.join(outdir, "mask.png"))
 
@@ -183,37 +177,37 @@ def main(network, outdir, seeds, class_idx,
 
         rnd = StackedRandomGenerator(device, [seed])
 
-        class_labels = None
-        if net.label_dim:
-            class_labels = torch.eye(net.label_dim, device=device)[
-                rnd.randint(net.label_dim, size=[1], device=device)
-            ]
-        if class_idx is not None:
-            class_labels[:] = 0
-            class_labels[:, class_idx] = 1
-
-        sigma_min = 0.002
-        sigma_max = 1
-
-        x_masked = x_orig * (1 - mask_tensor)
         noise = rnd.randn(
             [1, net.img_channels, H, W],
             device=device
         )
 
-        latents = 0.3 * noise + x_masked
-        images = latents
-        """
-        with torch.no_grad():
-            images = latents - net(
-                latents,
-                t=sigma_max * torch.ones([1,1,1,1], device=device),
-                class_labels=class_labels,
-                h=(sigma_max-sigma_min)*sigma_max*torch.ones([1,1,1,1], device=device),
-                augment_labels=torch.zeros(1,9).to(device)
-            )
-"""
-        # images = x_orig * (1 - mask_tensor) + images * mask_tensor
+        latents = noise * mask_tensor + x_orig * (1 - mask_tensor)
+
+        class_labels = torch.zeros(1, net.label_dim, device=device)
+
+        sigma_min = 0.002
+        sigma_max = 1
+
+        # Use single-channel mask for conditioning
+        mask_single = mask_tensor[:, :1, :, :]
+
+        # Concatenate conditioning
+        model_input = torch.cat([
+            latents,      # 3
+            x_orig,       # 3
+            mask_single   # 1
+        ], dim=1)         # -> 7 channels
+
+        images = latents - net(
+            model_input,
+            t=sigma_max * torch.ones([1,1,1,1], device=device),
+            class_labels=class_labels,
+            h=(sigma_max-sigma_min)*sigma_max*torch.ones([1,1,1,1], device=device),
+            augment_labels=torch.zeros(1,9).to(device)
+        )
+
+        images = x_orig * (1 - mask_tensor) + images * mask_tensor
 
         images_np = (images * 127.5 + 128).clamp(0,255)
         images_np = images_np.to(torch.uint8).permute(0,2,3,1)

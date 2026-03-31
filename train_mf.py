@@ -131,7 +131,7 @@ def main(**kwargs):
     c.network_kwargs = dnnlib.EasyDict()
     c.loss_kwargs = dnnlib.EasyDict()
     c.optimizer_kwargs = dnnlib.EasyDict(class_name='torch.optim.Adam', lr=opts.lr, betas=[0.9,0.95], eps=1e-8)
-    c.metrics = opts.metrics
+    c.metrics = None # opts.metrics
     c.detector_url=opts.detector_url
     c.data_stat=opts.data_stat
 
