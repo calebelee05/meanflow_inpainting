@@ -257,7 +257,7 @@ class SongUNet(torch.nn.Module):
         img_resolution,                     # Image resolution at input/output.
         in_channels,                        # Number of color channels at input.
         out_channels,                       # Number of color channels at output.
-        label_dim           = 10,            # Number of class labels, 0 = unconditional.
+        label_dim           = 0,            # Number of class labels, 0 = unconditional.
         augment_dim         = 0,            # Augmentation label dimensionality, 0 = no augmentation.
 
         model_channels      = 128,          # Base multiplier for the number of channels.
@@ -710,7 +710,7 @@ class MFPrecond(torch.nn.Module):
     def __init__(self,
         img_resolution,                     # Image resolution.
         img_channels,                       # Number of color channels.
-        label_dim       = 10,                # Number of class labels, 0 = unconditional.
+        label_dim       = 0,                # Number of class labels, 0 = unconditional.
         use_fp16        = False,            # Execute the underlying model at FP16 precision?
         sigma_min       = 0.002,                # Minimum supported noise level.
         sigma_max       = 80,     # Maximum supported noise level.
@@ -726,7 +726,7 @@ class MFPrecond(torch.nn.Module):
         self.sigma_min = sigma_min
         self.sigma_max = sigma_max
         self.sigma_data = sigma_data
-        self.model = globals()[model_type](img_resolution=img_resolution, in_channels=img_channels, out_channels=img_channels, label_dim=label_dim, **model_kwargs)
+        self.model = globals()[model_type](img_resolution=img_resolution, in_channels=img_channels * 2 + 1, out_channels=img_channels, label_dim=label_dim, **model_kwargs)
 
     def forward(self, x, t, class_labels=None, h=None, force_fp32=False, **model_kwargs):
         x = x.to(torch.float32)

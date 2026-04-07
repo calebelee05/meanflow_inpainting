@@ -1,5 +1,6 @@
 """
-One-step MeanFlow Inpainting Script
+Standalone MeanFlow Inpainting Script
+(No call to generate_onestep_mf.py)
 """
 
 import os
@@ -59,14 +60,6 @@ def load_random_cifar(zip_path):
             return np.array(PIL.Image.open(f).convert("RGB"))
 
 
-def generate_random_mask(h, w, size):
-    mask = np.zeros((h, w), dtype=np.uint8)
-    top = random.randint(0, h-size)
-    left = random.randint(0, w-size)
-    mask[top:top+size, left:left+size] = 255
-    return mask
-
-
 # ---------------------------------------------------------
 # CLI
 # ---------------------------------------------------------
@@ -75,14 +68,14 @@ def generate_random_mask(h, w, size):
 @click.option('--network', required=True, help='Network snapshot (.pkl)')
 @click.option('--outdir', required=True, help='Output directory')
 @click.option('--seeds', default='0', help='Seeds (e.g. 0 or 0-10)')
-@click.option('--class_idx', '--class', default=None, type=int)
 @click.option('--image', default=None, help='Path to image')
 @click.option('--mask', default=None, help='Path to mask')
 @click.option('--cifar_zip', default=None, help='Fallback CIFAR zip')
-@click.option('--mask_size', default=12, type=int)
+@click.option('--mask_rate', default=0.1, type=float)
+@click.option('--mask_type', default='scatter', type=str)
 @click.option('--device', default='cuda')
-def main(network, outdir, seeds, class_idx,
-         image, mask, cifar_zip, mask_size, device):
+def main(network, outdir, seeds,
+         image, mask, cifar_zip, mask_rate, mask_type, device):
 
     device = torch.device(device)
     os.makedirs(outdir, exist_ok=True)
@@ -124,7 +117,7 @@ def main(network, outdir, seeds, class_idx,
             PIL.Image.open(mask).convert("L").resize((W, H))
         )
     else:
-        mask_np = generate_random_mask(H, W, mask_size)
+        mask_np = dnnlib.util.generate_random_mask(H, W, mask_type=mask_type, min_size=1, max_size=3, target_coverage=mask_rate)
 
     PIL.Image.fromarray(mask_np).save(os.path.join(outdir, "mask.png"))
 
@@ -160,20 +153,23 @@ def main(network, outdir, seeds, class_idx,
 
         latents = noise * mask_tensor + x_orig * (1 - mask_tensor)
 
-        class_labels = None
-        if net.label_dim:
-            class_labels = torch.eye(net.label_dim, device=device)[
-                rnd.randint(net.label_dim, size=[1], device=device)
-            ]
-        if class_idx is not None:
-            class_labels[:] = 0
-            class_labels[:, class_idx] = 1
+        class_labels = torch.zeros(1, net.label_dim, device=device)
 
         sigma_min = 0.002
         sigma_max = 1
 
+        # Use single-channel mask for conditioning
+        mask_single = mask_tensor[:, :1, :, :]
+
+        # Concatenate conditioning
+        model_input = torch.cat([
+            latents,      # 3
+            x_orig,       # 3
+            mask_single   # 1
+        ], dim=1)         # -> 7 channels
+
         images = latents - net(
-            latents,
+            model_input,
             t=sigma_max * torch.ones([1,1,1,1], device=device),
             class_labels=class_labels,
             h=(sigma_max-sigma_min)*sigma_max*torch.ones([1,1,1,1], device=device),

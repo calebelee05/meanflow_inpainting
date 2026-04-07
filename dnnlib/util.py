@@ -27,6 +27,7 @@ import tempfile
 import urllib
 import urllib.request
 import uuid
+import random
 
 from distutils.util import strtobool
 from typing import Any, List, Tuple, Union, Optional
@@ -489,3 +490,64 @@ def open_url(url: str, cache_dir: str = None, num_attempts: int = 10, verbose: b
     # Return data as file object.
     assert not return_filename
     return io.BytesIO(url_data)
+
+def generate_random_mask(
+    height=32,
+    width=32,
+    min_squares=10,
+    max_squares=50,
+    min_size=2,
+    max_size=16,
+    allow_overlap=True,
+    mask_type='scatter',
+    target_coverage=None,
+):
+    """
+    Generate mask with many small square holes.
+
+    Args:
+        height, width: image size
+        min_squares, max_squares: number of squares
+        min_size, max_size: side length of squares
+        allow_overlap: whether squares can overlap
+        target_coverage: optional float (0-1) for approximate masked ratio
+
+    Returns:
+        mask (H, W) uint8 (255 = masked, 0 = keep)
+    """
+    if mask_type == 'square':
+        max_size = min_size = int(np.sqrt(target_coverage * height * width))
+        min_squares = max_squares = 1
+    
+    mask = np.zeros((height, width), dtype=np.uint8)
+
+    if target_coverage is not None:
+        max_squares = 10_000  # allow many attempts
+
+    num_squares = random.randint(min_squares, max_squares)
+
+    masked_pixels = 0
+    total_pixels = height * width
+
+    for _ in range(num_squares):
+
+        size = random.randint(min_size, max_size)
+        top = random.randint(0, height - size)
+        left = random.randint(0, width - size)
+
+        if not allow_overlap:
+            if mask[top:top+size, left:left+size].sum() > 0:
+                continue
+
+        before = mask.sum()
+
+        mask[top:top+size, left:left+size] = 255
+
+        if target_coverage is not None:
+            after = mask.sum()
+            masked_pixels = after / 255
+
+            if masked_pixels / total_pixels >= target_coverage:
+                break
+
+    return mask

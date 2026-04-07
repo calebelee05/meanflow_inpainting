@@ -16,6 +16,8 @@
 import torch
 from torch_utils import persistence
 import torch.nn.functional as F
+import random
+import numpy as np
 
 @persistence.persistent_class
 class MeanFlowLoss:
@@ -75,9 +77,45 @@ class MeanFlowLoss:
         v_g = torch.where(rand_mask[:, None, None, None], v, v_g)
         return labels_drop, v_g
 
+    def _random_box_mask(self, x, corruption_rate=0.25, min_ratio=0.05, max_ratio=0.15):
+        """
+        Generate multiple small rectangular masks until the masked area
+        approximately matches corruption_rate.
+
+        Returns:
+            mask: Tensor [B,1,H,W] where 1 = masked region
+        """
+        B, C, H, W = x.shape
+        device = x.device
+
+        masks = torch.zeros((B, 1, H, W), device=device)
+
+        total_pixels = H * W
+        target_pixels = int(corruption_rate * total_pixels)
+
+        for i in range(B):
+
+            masked_pixels = 0
+
+            while masked_pixels < target_pixels:
+
+                box_h = torch.randint(1, 4, (1,), device=device).item()  # Random height between 1 and 3 pixels
+                box_w = torch.randint(1, 4, (1,), device=device).item()  # Random width between 1 and 3 pixels
+
+                top = torch.randint(0, H - box_h + 1, (1,), device=device).item()
+                left = torch.randint(0, W - box_w + 1, (1,), device=device).item()
+
+                masks[i, :, top:top+box_h, left:left+box_w] = 1.0
+
+                masked_pixels = masks[i].sum().item()
+
+        return masks
+
     def __call__(self, net, images, labels=None, augment_pipe=None):
         x = images
         device = x.device
+        masks = self._random_box_mask(x, corruption_rate=(random.random() + 0.4) / 2.0)  # [B,1,H,W]
+        x_masked = x * (1 - masks)
         batch_size = x.shape[0]
         shape = (batch_size, 1, 1, 1)
         
@@ -96,7 +134,8 @@ class MeanFlowLoss:
             y, augment_labels = x, None
 
         n = torch.randn_like(y) # Create noise and corrupted image
-        z_t = (1 - t) * y + t * n
+        z_t_full = (1 - t) * y + t * n
+        z_t = z_t_full * masks + y * (1 - masks)
         v = n - y  # True velocity
         
         # Prepare labels for guidance
@@ -108,8 +147,8 @@ class MeanFlowLoss:
                 labels_null = torch.full_like(labels, self.num_classes)
                 
                 # Get conditional and unconditional velocities
-                v_cond = net.module(z_t, t, class_labels=labels, h=torch.zeros_like(t), augment_labels=augment_labels)
-                v_uncond = net.module(z_t, t, class_labels=labels_null, h=torch.zeros_like(t), augment_labels=augment_labels)
+                v_cond = net.module(torch.cat([z_t, x_masked, masks], dim=1), t, class_labels=labels, h=torch.zeros_like(t), augment_labels=augment_labels)
+                v_uncond = net.module(torch.cat([z_t, x_masked, masks], dim=1), t, class_labels=labels_null, h=torch.zeros_like(t), augment_labels=augment_labels)
                 
                 # Apply guidance and conditional dropout
                 v_g = self._apply_guidance(v, v_uncond, v_cond, t)
@@ -119,7 +158,7 @@ class MeanFlowLoss:
 
         # Compute model output and time derivative
         def u_wrapper(z, t, r):
-            return net.module(z, t, class_labels=labels_in, h=t-r, augment_labels=augment_labels)
+            return net.module(torch.cat([z, x_masked, masks], dim=1), t, class_labels=labels_in, h=t-r, augment_labels=augment_labels)
         
         primals = (z_t, t, r)
         tangents = (v_g, torch.ones_like(t), torch.zeros_like(t))
@@ -130,7 +169,8 @@ class MeanFlowLoss:
         if self.detach_tgt:
             u_tgt = u_tgt.detach()
 
-        unweighted_loss = (u - u_tgt).pow(2).sum(dim=[1, 2, 3]) # Adaptive loss weighting
+        diff = (u - u_tgt) * masks
+        unweighted_loss = diff.pow(2).sum(dim=[1,2,3])
         with torch.no_grad():
             adaptive_weight = 1 / (unweighted_loss + self.norm_eps).pow(self.norm_p)
         

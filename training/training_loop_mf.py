@@ -165,7 +165,7 @@ def training_loop(
     net.train().requires_grad_(True).to(device)
     if dist.get_rank() == 0:
         with torch.no_grad():
-            images = torch.zeros([batch_gpu, net.img_channels, net.img_resolution, net.img_resolution], device=device)
+            images = torch.zeros([batch_gpu, net.img_channels * 2 + 1, net.img_resolution, net.img_resolution], device=device)
             sigma = torch.ones([batch_gpu], device=device)
             labels = torch.zeros([batch_gpu, net.label_dim], device=device)
             misc.print_module_summary(net, [images, sigma, labels], max_nesting=2)
@@ -179,6 +179,24 @@ def training_loop(
     ddp = torch.nn.parallel.DistributedDataParallel(net, device_ids=[device], broadcast_buffers=False, static_graph=True, find_unused_parameters=False,  gradient_as_bucket_view=True)   # 关闭缓冲区同步，使用静态图，为了计算jvp,
     
     ema = copy.deepcopy(net).eval().requires_grad_(False)
+
+    def ema_forward_inpaint(z, sigma, c, h, augment_labels):
+        # create mask (example: full ones mask — replace with your mask logic)
+        mask = torch.ones([z.shape[0], 1, z.shape[2], z.shape[3]], device=z.device)
+
+        # boundary condition
+        x_masked = z * mask
+
+        # concatenate to 7 channels
+        z_input = torch.cat([z, x_masked, mask], dim=1)
+
+        return ema(
+            z_input,
+            sigma,
+            c,
+            h=h,
+            augment_labels=augment_labels
+        )
 
     # Resume training from previous snapshot.
     if resume_pkl is not None:
@@ -222,7 +240,7 @@ def training_loop(
         
         print('Exporting sample images...')
         save_image_grid(img=images, fname=os.path.join(run_dir, 'reals.png'), drange=[0,255], grid_size=grid_size)
-        images = torch.cat([(z-ema(z, sigma_min*torch.ones([z.shape[0], 1, 1, 1], device=z.device), c, h=sigma_max*torch.ones([z.shape[0], 1, 1, 1], device=z.device), augment_labels=torch.zeros(z.shape[0], 9).to(z.device))).cpu() for z, c in zip(grid_z, grid_c)]).numpy()
+        images = torch.cat([(z-ema_forward_inpaint(z, sigma_min*torch.ones([z.shape[0], 1, 1, 1], device=z.device), c, h=sigma_max*torch.ones([z.shape[0], 1, 1, 1], device=z.device), augment_labels=torch.zeros(z.shape[0], 9).to(z.device))[:, :3]).cpu() for z, c in zip(grid_z, grid_c)]).numpy()
         save_image_grid(img=images, fname=os.path.join(run_dir, 'fakes_init.png'), drange=[-1,1], grid_size=grid_size)
         del images
 
@@ -302,7 +320,7 @@ def training_loop(
         if (snapshot_ticks is not None) and (done or cur_tick % snapshot_ticks == 0 or cur_tick in [2,10,20,30,40,50,60,70,80,90,100]):
             dist.print0('Exporting sample images...')
             if dist.get_rank() == 0:
-                images = torch.cat([(z-ema(z, sigma_max*torch.ones([z.shape[0], 1, 1, 1], device=z.device), c, h=(sigma_max-sigma_min)*torch.ones([z.shape[0], 1, 1, 1], device=z.device), augment_labels=torch.zeros(z.shape[0], 9).to(z.device))).cpu() for z, c in zip(grid_z, grid_c)]).numpy()
+                images = torch.cat([(z-ema_forward_inpaint(z, sigma_max*torch.ones([z.shape[0], 1, 1, 1], device=z.device), c, h=(sigma_max-sigma_min)*torch.ones([z.shape[0], 1, 1, 1], device=z.device), augment_labels=torch.zeros(z.shape[0], 9).to(z.device))[:, :3]).cpu() for z, c in zip(grid_z, grid_c)]).numpy()
                 save_image_grid(img=images, fname=os.path.join(run_dir, f'fakes_{cur_nimg//1000:06d}.png'), drange=[-1,1], grid_size=grid_size)
 
                 del images; gc.collect(); torch.cuda.empty_cache()
