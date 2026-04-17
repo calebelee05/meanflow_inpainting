@@ -93,30 +93,37 @@ class MeanFlowLoss:
         total_pixels = H * W
         target_pixels = int(corruption_rate * total_pixels)
 
-        for i in range(B):
+        # for i in range(B):
 
-            masked_pixels = 0
+        #     masked_pixels = 0
 
-            while masked_pixels < target_pixels:
+        #     while masked_pixels < target_pixels:
 
-                box_h = torch.randint(1, 4, (1,), device=device).item()  # Random height between 1 and 3 pixels
-                box_w = torch.randint(1, 4, (1,), device=device).item()  # Random width between 1 and 3 pixels
+        #         box_h = 1  # box height
+        #         box_w = 1  # box width
 
-                top = torch.randint(0, H - box_h + 1, (1,), device=device).item()
-                left = torch.randint(0, W - box_w + 1, (1,), device=device).item()
+        #         top = torch.randint(0, H - box_h + 1, (1,), device=device).item()
+        #         left = torch.randint(0, W - box_w + 1, (1,), device=device).item()
 
-                masks[i, :, top:top+box_h, left:left+box_w] = 1.0
+        #         masks[i, :, top:top+box_h, left:left+box_w] = 1.0
 
-                masked_pixels = masks[i].sum().item()
+        #         masked_pixels = masks[i].sum().item()
 
         return masks
 
     def __call__(self, net, images, labels=None, augment_pipe=None):
         x = images
         device = x.device
-        masks = self._random_box_mask(x, corruption_rate=(random.random() + 0.4) / 2.0)  # [B,1,H,W]
-        x_masked = x * (1 - masks)
-        batch_size = x.shape[0]
+        
+        # For 2-channel data: [initial_condition, latent_to_predict]
+        if x.shape[1] == 2:
+            x_init = x[:, 0:1, :, :].clone()  # Initial condition - stays fully visible
+            x_final = x[:, 1:2, :, :].clone()  # Latent - to be predicted (completely masked in input)
+        else:
+            x_init = x
+            x_final = x
+        
+        batch_size = x_init.shape[0]
         shape = (batch_size, 1, 1, 1)
         
         t = self.noise_distribution(shape, device) # Sample t and r from noise distribution
@@ -129,14 +136,16 @@ class MeanFlowLoss:
 
         # Apply augmentations if needed
         if augment_pipe is not None:
-            y, augment_labels = augment_pipe(x)
+            y_final, augment_labels = augment_pipe(x_final)
         else:
-            y, augment_labels = x, None
+            y_final, augment_labels = x_final, None
 
-        n = torch.randn_like(y) # Create noise and corrupted image
-        z_t_full = (1 - t) * y + t * n
-        z_t = z_t_full * masks + y * (1 - masks)
-        v = n - y  # True velocity
+        n = torch.randn_like(y_final) # Create noise and corrupted latent
+        z_t = (1 - t) * y_final + t * n
+        v = n - y_final  # True velocity of latent
+        
+        # For network input: channel 0 = fully visible initial condition, channel 1 = completely masked (zeros)
+        net_input = torch.cat([x_init, z_t], dim=1)  # [B, 2, H, W]
         
         # Prepare labels for guidance
         labels_in = labels
@@ -147,8 +156,8 @@ class MeanFlowLoss:
                 labels_null = torch.full_like(labels, self.num_classes)
                 
                 # Get conditional and unconditional velocities
-                v_cond = net.module(torch.cat([z_t, x_masked, masks], dim=1), t, class_labels=labels, h=torch.zeros_like(t), augment_labels=augment_labels)
-                v_uncond = net.module(torch.cat([z_t, x_masked, masks], dim=1), t, class_labels=labels_null, h=torch.zeros_like(t), augment_labels=augment_labels)
+                v_cond = net.module(net_input, t, class_labels=labels, h=torch.zeros_like(t), augment_labels=augment_labels)
+                v_uncond = net.module(net_input, t, class_labels=labels_null, h=torch.zeros_like(t), augment_labels=augment_labels)
                 
                 # Apply guidance and conditional dropout
                 v_g = self._apply_guidance(v, v_uncond, v_cond, t)
@@ -158,7 +167,8 @@ class MeanFlowLoss:
 
         # Compute model output and time derivative
         def u_wrapper(z, t, r):
-            return net.module(torch.cat([z, x_masked, masks], dim=1), t, class_labels=labels_in, h=t-r, augment_labels=augment_labels)
+            net_input_wrapper = torch.cat([x_init, z], dim=1)
+            return net.module(net_input_wrapper, t, class_labels=labels_in, h=t-r, augment_labels=augment_labels)
         
         primals = (z_t, t, r)
         tangents = (v_g, torch.ones_like(t), torch.zeros_like(t))
@@ -169,7 +179,14 @@ class MeanFlowLoss:
         if self.detach_tgt:
             u_tgt = u_tgt.detach()
 
-        diff = (u - u_tgt) * masks
+        # Create channel mask: loss only on channel 1 (latent), not on channel 0 (initial condition)
+        channel_mask = torch.zeros_like(u)
+        if u.shape[1] >= 2:
+            channel_mask[:, 1:2, :, :] = 1.0  # Loss only on latent channel
+        else:
+            channel_mask = torch.ones_like(u)  # For single-channel data, compute loss normally
+        
+        diff = (u - u_tgt) * channel_mask
         unweighted_loss = diff.pow(2).sum(dim=[1,2,3])
         with torch.no_grad():
             adaptive_weight = 1 / (unweighted_loss + self.norm_eps).pow(self.norm_p)

@@ -248,3 +248,113 @@ class ImageFolderDataset(Dataset):
         return labels
 
 #----------------------------------------------------------------------------
+
+class NpzFolderDataset(Dataset):
+    def __init__(self,
+        path,                   # Path to directory containing .npz files.
+        resolution      = None, # Ensure specific resolution, None = highest available.
+        data_name       = 'last_value', # Key in .npz to use as image data.
+        label_name      = 'label',      # Key in .npz to use as label data.
+        use_labels      = False,        # Enable label conditioning.
+        **super_kwargs,         # Additional arguments for the Dataset base class.
+    ):
+        self._path = path
+        self._data_name = data_name
+        self._label_name = label_name
+
+        if not os.path.isdir(self._path):
+            raise IOError('Path must point to a directory containing .npz files')
+
+        self._npz_fnames = sorted([fname for fname in os.listdir(self._path) if fname.lower().endswith('.npz')])
+        if len(self._npz_fnames) == 0:
+            raise IOError('No .npz files found in the specified path')
+
+        name = os.path.basename(self._path.rstrip('/\\'))
+        sample = np.load(os.path.join(self._path, self._npz_fnames[0]))
+        raw_image = self._load_raw_image_internal(sample)
+        raw_shape = [len(self._npz_fnames)] + list(raw_image.shape)
+        if resolution is not None and (raw_shape[2] != resolution or raw_shape[3] != resolution):
+            raise IOError('NPZ files do not match the specified resolution')
+        super().__init__(name=name, raw_shape=raw_shape, use_labels=use_labels, **super_kwargs)
+
+    def _load_raw_image_internal(self, data):
+        # Support both new format ("data") and old format ("last_value")
+        if self._data_name in data:
+            image = np.asarray(data[self._data_name])
+        elif 'data' in data:
+            # Fallback to 'data' key for 2-channel format
+            image = np.asarray(data['data'])
+        elif 'last_value' in data:
+            # Fallback to 'last_value' key for old format
+            image = np.asarray(data['last_value'])
+        else:
+            raise IOError(f'NPZ file does not contain key "{self._data_name}", "data", or "last_value"')
+        
+        if image.ndim == 1:
+            side = int(np.sqrt(image.size))
+            if side * side != image.size:
+                raise IOError('NPZ image data must be square when flattened')
+            image = image.reshape(side, side)
+        
+        if image.ndim == 2:
+            # Check if this is (C, flattened_spatial) format
+            # If first dimension is small (1-4), treat as channels
+            if image.shape[0] in [1, 2, 3, 4]:
+                # This is (C, flattened_spatial) - reshape spatial dimension to square
+                C = image.shape[0]
+                spatial = image.shape[1]
+                side = int(np.sqrt(spatial))
+                if side * side == spatial:
+                    image = image.reshape(C, side, side)
+                else:
+                    # Not a perfect square, add channel dimension instead
+                    image = image[np.newaxis, :, :]
+            else:
+                # Regular 2D grayscale image - add channel dimension
+                image = image[np.newaxis, :, :]
+        
+        elif image.ndim == 3:
+            if image.shape[0] in [1, 2, 3, 4]:
+                pass  # Already in CHW format
+            elif image.shape[-1] in [1, 2, 3, 4]:
+                image = image.transpose(2, 0, 1)  # Convert HWC to CHW
+            else:
+                raise IOError('NPZ image must be CHW or HWC')
+        else:
+            raise IOError('NPZ image must be 1D, 2D, or 3D')
+        
+        return image
+
+    def _convert_to_uint8(self, image):
+        if image.dtype != np.uint8:
+            if np.issubdtype(image.dtype, np.floating):
+                if image.max() <= 1.0:
+                    image = np.clip(image, 0.0, 1.0) * 255.0
+                else:
+                    image = np.clip(image, 0.0, 255.0)
+            else:
+                image = np.clip(image, 0, 255)
+            image = image.astype(np.uint8)
+        return image
+
+    def _load_raw_image(self, raw_idx):
+        fname = self._npz_fnames[raw_idx]
+        data = np.load(os.path.join(self._path, fname))
+        image = self._load_raw_image_internal(data)
+        return self._convert_to_uint8(image)
+
+    def _load_raw_labels(self):
+        labels = np.zeros([len(self._npz_fnames)], dtype=np.int64)
+        for idx, fname in enumerate(self._npz_fnames):
+            data = np.load(os.path.join(self._path, fname))
+            if self._label_name in data:
+                labels[idx] = int(data[self._label_name].item())
+            elif 'label' in data:
+                # Fallback to 'label' key
+                labels[idx] = int(data['label'].item())
+            else:
+                # Default label: 0
+                labels[idx] = 0
+        return labels
+
+#----------------------------------------------------------------------------

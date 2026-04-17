@@ -20,7 +20,7 @@ import click
 import torch
 import dnnlib
 from torch_utils import distributed as dist
-from training import training_loop_mf as training_loop
+from training import training_loop_mf_pde as training_loop
 
 import warnings
 warnings.filterwarnings('ignore', 'Grad strides do not match bucket view strides') # False warning printed by PyTorch 1.12.
@@ -126,7 +126,20 @@ def main(**kwargs):
 
     # Initialize config dict.
     c = dnnlib.EasyDict()
-    c.dataset_kwargs = dnnlib.EasyDict(class_name='training.dataset.ImageFolderDataset', path=opts.data, use_labels=opts.cond, xflip=opts.xflip, cache=opts.cache)
+    
+    # Detect dataset type: NPZ files or image folder
+    dataset_class = 'training.dataset.ImageFolderDataset'
+    dataset_kwargs = dict(path=opts.data, use_labels=opts.cond, xflip=opts.xflip, cache=opts.cache)
+    
+    if os.path.isdir(opts.data):
+        # Check if directory contains .npz files
+        npz_files = [f for f in os.listdir(opts.data) if f.endswith('.npz')]
+        if npz_files:
+            dataset_class = 'training.dataset.NpzFolderDataset'
+            # NpzFolderDataset doesn't support xflip in the same way, so remove it
+            dataset_kwargs.pop('xflip', None)
+    
+    c.dataset_kwargs = dnnlib.EasyDict(class_name=dataset_class, **dataset_kwargs)
     c.data_loader_kwargs = dnnlib.EasyDict(pin_memory=True, num_workers=opts.workers, prefetch_factor=2)
     c.network_kwargs = dnnlib.EasyDict()
     c.loss_kwargs = dnnlib.EasyDict()
@@ -157,7 +170,7 @@ def main(**kwargs):
         c.network_kwargs.update(model_type='SongUNet', embedding_type='positional', encoder_type='standard', decoder_type='standard')
         c.network_kwargs.update(channel_mult_noise=1, resample_filter=[1,1], model_channels=128, channel_mult=[2,2,2])
     else:
-        raise NoteImplementedError('Architecture {opts.arch} not implemented.')
+        raise NotImplementedError(f'Architecture {opts.arch} not implemented.')
 
     # Preconditioning & loss function.
     assert opts.precond == 'mf'

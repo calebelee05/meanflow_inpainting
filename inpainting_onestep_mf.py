@@ -153,6 +153,8 @@ def main(network, outdir, seeds,
 
         latents = noise * mask_tensor + x_orig * (1 - mask_tensor)
 
+        masked_img = x_orig * (1 - mask_tensor)
+
         class_labels = torch.zeros(1, net.label_dim, device=device)
 
         sigma_min = 0.002
@@ -164,7 +166,7 @@ def main(network, outdir, seeds,
         # Concatenate conditioning
         model_input = torch.cat([
             latents,      # 3
-            x_orig,       # 3
+            masked_img,   # 3
             mask_single   # 1
         ], dim=1)         # -> 7 channels
 
@@ -176,7 +178,7 @@ def main(network, outdir, seeds,
             augment_labels=torch.zeros(1,9).to(device)
         )
 
-        images = x_orig * (1 - mask_tensor) + images * mask_tensor
+        images = masked_img + images * mask_tensor
 
         images_np = (images * 127.5 + 128).clamp(0,255)
         images_np = images_np.to(torch.uint8).permute(0,2,3,1)

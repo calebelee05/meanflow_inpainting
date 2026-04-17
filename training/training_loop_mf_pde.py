@@ -130,7 +130,7 @@ def training_loop(
     optimizer_kwargs    = {},       # Options for optimizer.
     augment_kwargs      = None,     # Options for augmentation pipeline, None = disable.
     seed                = 0,        # Global random seed.
-    batch_size          = 512,      # Total batch size for one training iteration.
+    batch_size          = 128,      # Total batch size for one training iteration.
     batch_gpu           = None,     # Limit batch size per GPU, None = no limit.
     total_kimg          = 200000,   # Training duration, measured in thousands of training images.
     ema_halflife_kimg   = 500,      # Half-life of the exponential moving average (EMA) of model weights.
@@ -138,7 +138,7 @@ def training_loop(
     lr_rampup_kimg      = 10000,    # Learning rate ramp-up duration.
     loss_scaling        = 1,        # Loss scaling factor for reducing FP16 under/overflows.
     kimg_per_tick       = 50,       # Interval of progress prints.
-    snapshot_ticks      = 20,       # How often to save network snapshots, None = disable.
+    snapshot_ticks      = 4,       # How often to save network snapshots, None = disable.
     state_dump_ticks    = 4,       # How often to dump training state, None = disable.
     resume_pkl          = None,     # Start from the given network snapshot, None = random initialization.
     resume_state_dump   = None,     # Start from the given training state, None = reset training state.
@@ -169,6 +169,15 @@ def training_loop(
 
     # Load dataset.
     dist.print0('Loading dataset...')
+    if dataset_kwargs.get('path') is not None and dataset_kwargs.get('class_name') is None:
+        data_path = dataset_kwargs['path']
+        if os.path.isdir(data_path) and any(fname.lower().endswith('.npz') for fname in os.listdir(data_path)):
+            dataset_kwargs = dnnlib.EasyDict(dataset_kwargs)
+            dataset_kwargs.class_name = 'training.dataset.NpzFolderDataset'
+            if dataset_kwargs.get('data_name') is None:
+                dataset_kwargs.data_name = 'last_value'
+            if dataset_kwargs.get('label_name') is None:
+                dataset_kwargs.label_name = 'label'
     dataset_obj = dnnlib.util.construct_class_by_name(**dataset_kwargs) # subclass of training.dataset.Dataset
     dataset_sampler = misc.InfiniteSampler(dataset=dataset_obj, rank=dist.get_rank(), num_replicas=dist.get_world_size(), seed=seed)
     dataset_iterator = iter(torch.utils.data.DataLoader(dataset=dataset_obj, sampler=dataset_sampler, batch_size=batch_gpu, **data_loader_kwargs))
@@ -180,7 +189,7 @@ def training_loop(
     net.train().requires_grad_(True).to(device)
     if dist.get_rank() == 0:
         with torch.no_grad():
-            images = torch.zeros([batch_gpu, net.img_channels * 2 + 1, net.img_resolution, net.img_resolution], device=device)
+            images = torch.zeros([batch_gpu, net.img_channels, net.img_resolution, net.img_resolution], device=device)
             sigma = torch.ones([batch_gpu], device=device)
             labels = torch.zeros([batch_gpu, net.label_dim], device=device)
             misc.print_module_summary(net, [images, sigma, labels], max_nesting=2)
@@ -206,7 +215,7 @@ def training_loop(
         z_input = torch.cat([z, x_masked, mask], dim=1)
 
         return ema(
-            z_input,
+            z,
             sigma,
             c,
             h=h,
@@ -342,21 +351,9 @@ def training_loop(
                 save_image_grid(img=images, fname=os.path.join(run_dir, f'fakes_{cur_nimg//1000:06d}.png'), drange=[-1,1], grid_size=grid_size)
 
                 del images; gc.collect(); torch.cuda.empty_cache()
-
-            if cur_tick> 0:    
-                dist.print0('Evaluating metrics...')    
                 
-                if metrics is not None:
-                    # dist.print0('Evaluating metrics...')
-                    for metric in metrics:
-                        result_dict = calculate_metric(metric=metric, G=ema,
-                            dataset_kwargs=dataset_kwargs, num_gpus=dist.get_world_size(), rank=dist.get_rank(), local_rank=dist.get_local_rank(), device=device,data_stat=data_stat,detector_url=detector_url)
-                        if dist.get_rank() == 0:
-                            print(result_dict.results)
-                            metric_main.report_metric(result_dict, run_dir=run_dir, snapshot_pkl=f'fakes_{cur_nimg//1000:06d}.png')
-
         # Save network snapshot.
-        if (snapshot_ticks is not None) and (done or cur_tick % snapshot_ticks == 0):
+        if (snapshot_ticks is not None) and (done or cur_tick % snapshot_ticks == 0 or cur_tick in [10,20,30,40,50,60,70,80,90,100]):
             data = dict(ema=ema, loss_fn=loss_fn, augment_pipe=augment_pipe, dataset_kwargs=dict(dataset_kwargs))
             for key, value in data.items():
                 if isinstance(value, torch.nn.Module):
@@ -372,7 +369,8 @@ def training_loop(
             gc.collect(); torch.cuda.empty_cache()
 
         # Save full dump of the training state.
-        if (state_dump_ticks is not None) and (done or cur_tick % state_dump_ticks == 0) and cur_tick != 0 and dist.get_rank() == 0:
+        if (state_dump_ticks is not None) and (done or cur_tick % state_dump_ticks == 0 or cur_tick in [10,20,30,40,50,60,70,80,90,100]):
+            dist.print0('Saving training state...')
             torch.save(dict(net=net, optimizer_state=optimizer.state_dict()), os.path.join(run_dir, f'training-state-{cur_nimg//1000:06d}.pt'))
 
         # Update logs.

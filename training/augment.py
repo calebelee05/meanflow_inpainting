@@ -320,8 +320,15 @@ class AugmentPipe:
             elif C == 1:
                 M = M[:, :3, :].mean(dim=1, keepdims=True)
                 images = images * M[:, :, :3].sum(dim=2, keepdims=True) + M[:, :, 3:]
+            elif C == 2:
+                # For 2-channel data, apply color augmentation only to first channel (condition)
+                M_gray = M[:, :3, :].mean(dim=1, keepdims=True)
+                images[:, 0:1, :] = images[:, 0:1, :] * M_gray[:, :, :3].sum(dim=2, keepdims=True) + M_gray[:, :, 3:]
+                # Second channel (latent) is not augmented
             else:
-                raise ValueError('Image must be RGB (3 channels) or L (1 channel)')
+                # For other channel counts, apply grayscale color transform to all channels
+                M_gray = M[:, :3, :].mean(dim=1, keepdims=True)
+                images = images * M_gray[:, :, :3].sum(dim=2, keepdims=True) + M_gray[:, :, 3:]
             images = images.reshape([N, C, H, W])
 
         labels = torch.cat([x.to(torch.float32).reshape(N, -1) for x in labels], dim=1)
